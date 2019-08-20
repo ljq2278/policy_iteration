@@ -17,8 +17,8 @@ class ActorNet:
         if role=='worker':
             self.local_build_loss()
             self.local_build_grad()
-            self.local_build_param_pull(acpny_obj.actor)
-            self.local_build_apply_grad_to_global(acpny_obj.actor)
+            self.local_build_param_pull(acpny_obj.a_net)
+            self.local_build_apply_grad_to_global(acpny_obj.a_net)
 
     def build_inference(self,scope):
         self.scope = scope
@@ -65,8 +65,8 @@ class CriticNet:
         if role=='worker':
             self.local_build_loss()
             self.local_build_grad()
-            self.local_build_param_pull(acpny_obj.critic)
-            self.local_build_apply_grad_to_global(acpny_obj.critic)
+            self.local_build_param_pull(acpny_obj.c_net)
+            self.local_build_apply_grad_to_global(acpny_obj.c_net)
 
     def build_inference(self, scope):
         self.scope = scope
@@ -158,19 +158,14 @@ class Workor:
 
 
 if __name__ == "__main__":
-
+    testor = Testor(a_net=ActorNet('testor','testor',None),c_net=CriticNet('testor','testor',None))
     for i in range(0,work_num):
-        workors.append(Workor())
-
-    testor = Testor()
+        workors.append(Workor(a_net=ActorNet('worker',str(i),testor),c_net=CriticNet('worker',str(i),testor)))
 
     dataQueue = Queue(30)
     dataPreparation = [None] * 3
-    for proc in range(0, 3):
-        # dataPreparation[proc] = Process(target=prepareDataThread, args=(dataQueue, numpyImages, numpyGT))
-        dataPreparation[proc] = Process(target=prepareDataThread, args=(dataQueue,))
-        dataPreparation[proc].daemon = True
-        dataPreparation[proc].start()
+    for i in range(0, 3):
+        dataPreparation[i] = Process(target=workors[i].work)
+        dataPreparation[i].daemon = True
+        dataPreparation[i].start()
 
-    updateTestor(testor,workors)
-    updateWorks(testor, workors)
