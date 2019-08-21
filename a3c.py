@@ -122,7 +122,9 @@ class Worker(object):
                 #     self.env.render()
                 a = self.AC.choose_action(s)
                 s_, r, done, info = self.env.step(a)
-                if done: r = -5
+                if done:
+                    r = -5
+                    print(ep_r)
                 ep_r += r
                 buffer_s.append(s)
                 buffer_a.append(a)

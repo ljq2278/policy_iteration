@@ -1,15 +1,18 @@
-from multiprocessing import Process, Queue
+# from multiprocessing import Process, Queue
+import threading
 import tensorflow as tf
 import gym
 import numpy as np
 
-GAME = 'CartPole-v0'
+# GAME = 'CartPole-v0'
+GAME = 'MountainCar-v0'
 env = gym.make(GAME)
 N_S = env.observation_space.shape[0]
 N_A = env.action_space.n
 testor = None
 work_num = 3
 workors = []
+max_exp_num = 500
 
 class ActorNet:
     def __init__(self,role,scope,acpny_obj):
@@ -25,8 +28,9 @@ class ActorNet:
         with tf.variable_scope(self.scope+'_actor'):
             w_init = tf.random_normal_initializer(0., .1)
             self.s = tf.placeholder(shape=[None, N_S],dtype=tf.float32, name='S')
-            hl = tf.layers.dense(self.s, 200, tf.nn.relu6, kernel_initializer=w_init, name='hl')
-            self.a_prob = tf.layers.dense(hl, N_A, tf.nn.softmax, kernel_initializer=w_init, name='ap')
+            h1 = tf.layers.dense(self.s, 100, tf.nn.relu, kernel_initializer=w_init, name='h1')
+            h2 = tf.layers.dense(h1, 100, tf.nn.relu, kernel_initializer=w_init, name='h2')
+            self.a_prob = tf.layers.dense(h2, N_A, tf.nn.softmax, kernel_initializer=w_init, name='ap')
             self.a_params = tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES, scope=scope + '_actor')
 
     def local_build_loss(self):
@@ -73,8 +77,9 @@ class CriticNet:
         with tf.variable_scope(self.scope + '_critic'):
             w_init = tf.random_normal_initializer(0., .1)
             self.s = tf.placeholder(shape=[None, N_S], dtype=tf.float32, name='S')
-            hl = tf.layers.dense(self.s, 100, tf.nn.relu6, kernel_initializer=w_init, name='hl')
-            self.v = tf.layers.dense(hl, 1, tf.nn.softmax, kernel_initializer=w_init, name='v')
+            h1 = tf.layers.dense(self.s, 100, tf.nn.relu, kernel_initializer=w_init, name='hl')
+            h2 = tf.layers.dense(h1, 100, tf.nn.relu, kernel_initializer=w_init, name='h2')
+            self.v = tf.layers.dense(h2, 1, kernel_initializer=w_init, name='v')
             self.c_params = tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES, scope=scope + '_critic')
 
     def local_build_loss(self):
@@ -114,22 +119,28 @@ class Workor:
         self.env = gym.make(GAME).unwrapped
         self.a_net = a_net
         self.c_net = c_net
-    def work(self,sess):
+    def work(self,sess,id):
         s = self.env.reset()
         buffer_s, buffer_a, buffer_r = [], [], []
         ep_r = 0
         total_step = 0
-        while True:
-            a_prob = self.a_net.inference(s)
+        exp_num = 0
+        while exp_num < max_exp_num:
+            a_prob = self.a_net.inference(sess,np.reshape(s,[1,N_S]))
             a = np.random.choice(range(a_prob.shape[1]),p=a_prob.ravel())
             s_, r, done, info = self.env.step(a)
+            if done:
+                r = 1000
             ep_r += r
             buffer_s.append(s)
             buffer_a.append(a)
             buffer_r.append(r)
-            total_step+=1
+            total_step += 1
             if total_step % 100 == 0 or done:
-                v_s_ = self.c_net.inference(s_)
+                if done:
+                    v_s_ = 0
+                else:
+                    v_s_ = self.c_net.inference(sess,np.reshape(s_,[1,N_S]))
                 buffer_v_target = []
                 for r in buffer_r[::-1]:  # reverse buffer r
                     v_s_ = r + 0.9 * v_s_
@@ -140,7 +151,7 @@ class Workor:
                 feed_dict_a = {
                     self.a_net.s: buffer_s,
                     self.a_net.a: buffer_a,
-                    self.a_net.td: self.c_net.inference(sess,buffer_s)
+                    self.a_net.td: np.reshape(buffer_v_target-self.c_net.inference(sess,buffer_s),(buffer_v_target.shape[0],))
                 }
                 self.a_net.global_apply_grad(sess,feed=feed_dict_a)
                 feed_dict_c = {
@@ -148,24 +159,44 @@ class Workor:
                     self.c_net.v_target: buffer_v_target,
                 }
                 self.c_net.global_apply_grad(sess, feed=feed_dict_c)
-                self.a_net.setWeights(testor.actor)
-                self.c_net.setWeights(testor.critic)
+                self.a_net.local_setWeights(sess)
+                self.c_net.local_setWeights(sess)
 
                 if done:
                     s = self.env.reset()
-                else:
-                    s = s_
-
-
+                    print(str(exp_num)+' '+id+' ########### %d'%int(ep_r))
+                    ep_r = 0
+                    buffer_s, buffer_a, buffer_r = [], [], []
+                    exp_num += 1
+                    continue
+                buffer_s, buffer_a, buffer_r = [], [], []
+            s = s_
 if __name__ == "__main__":
     testor = Testor(a_net=ActorNet('testor','testor',None),c_net=CriticNet('testor','testor',None))
     for i in range(0,work_num):
         workors.append(Workor(a_net=ActorNet('worker',str(i),testor),c_net=CriticNet('worker',str(i),testor)))
 
-    dataQueue = Queue(30)
-    dataPreparation = [None] * 3
+    sess = tf.Session()
+    COORD = tf.train.Coordinator()
+    sess.run(tf.global_variables_initializer())
+    threads = [None] * 3
     for i in range(0, 3):
-        dataPreparation[i] = Process(target=workors[i].work)
-        dataPreparation[i].daemon = True
-        dataPreparation[i].start()
+        threads[i] = threading.Thread(target=workors[i].work,args=(sess,str(i)))
+        # threads[i].daemon = True
+        threads[i].start()
+    COORD.join(threads)
 
+    total_reward = 0
+    for i in range(10):
+        state = testor.env.reset()
+        for j in range(1000):
+            testor.env.render()
+            a_prob = testor.a_net.inference(sess, np.reshape(state, [1, N_S]))
+            action = np.random.choice(range(a_prob.shape[1]), p=a_prob.ravel())
+            # action = testor.a_net.choose_action(state)  # direct action for test
+            state, reward, done, _ = testor.env.step(action)
+            total_reward += reward
+            if done:
+                break
+    ave_reward = total_reward / 10
+    print('episode: ', max_exp_num, 'Evaluation Average Reward:', ave_reward)
