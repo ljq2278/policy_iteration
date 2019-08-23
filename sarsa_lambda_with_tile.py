@@ -37,8 +37,7 @@ class TileCoder:
         scaled_floats = tuple(f * self.layers * self.layers for f in floats)
         features = []
         for layer in range(self.layers):
-            codeword = (layer,) + tuple(int((f + (1 + dim * i) * layer) / self.layers) \
-                                        for i, f in enumerate(scaled_floats)) + ints
+            codeword = (layer,) + tuple(int((f + (1 + dim * i) * layer) / self.layers) for i, f in enumerate(scaled_floats)) + ints
             feature = self.get_feature(codeword)
             features.append(feature)
         return features
@@ -123,7 +122,7 @@ def play_sarsa(env, agent, train=False, render=False):
 
 env = gym.make('MountainCar-v0')
 env.seed(0)
-env = gym.wrappers.Monitor(env, "./records", video_callable=lambda _: True)
+# env = gym.wrappers.Monitor(env, "./records", video_callable=lambda _: True)
 
 agent = SARSALambdaAgent(env)
 
